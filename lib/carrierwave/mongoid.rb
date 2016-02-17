@@ -73,6 +73,13 @@ module CarrierWave
           changed_attributes["#{column}"] = '_new_'
         end
 
+        def store_previous_model_for_#{column}
+          serialization_column = _mounter(:#{column}).serialization_column
+          if #{column}.remove_previously_stored_files_after_update && send(:"\#{serialization_column}_changed?")
+            @previous_model_for_#{column} ||= self.find_previous_model_for_#{column}
+          end
+        end
+
         def find_previous_model_for_#{column}
           if self.embedded?
             if self.respond_to?(:__metadata) # Mongoid >= 4.0.0.beta1
@@ -89,18 +96,31 @@ module CarrierWave
           end
         end
 
-        def serializable_hash(options=nil)
-          hash = {}
+        def remove_previously_stored_#{column}
+          if @previous_model_for_#{column} && @previous_model_for_#{column}.#{column}.path != #{column}.path && !#{column}.path.nil?
+            @previous_model_for_#{column}.#{column}.remove!
+            @previous_model_for_#{column} = nil
+          end
+        end
 
-          except = options && options[:except] && Array.wrap(options[:except]).map(&:to_s)
-          only   = options && options[:only]   && Array.wrap(options[:only]).map(&:to_s)
-
-          self.class.uploaders.each do |column, uploader|
-            if (!only && !except) || (only && only.include?(column.to_s)) || (except && !except.include?(column.to_s))
-              hash[column.to_s] = _mounter(column.to_sym).uploader.serializable_hash
+        def serializable_hash(options = nil)
+          super(options).tap do |result_hash|
+            self.class.uploaders.each do |column, _|
+              if result_hash.has_key?(column.to_s) || result_hash.has_key?(column)
+                serialized_key = result_hash.has_key?(column.to_s) ? column.to_s : column
+                column_uploaders = _mounter(column.to_sym).uploaders
+                result_hash[serialized_key] = if column_uploaders.count > 1
+                  column_uploaders.map(&:serializable_hash)
+                else
+                  if column_uploader = column_uploaders.first
+                    column_uploader.serializable_hash
+                  else
+                    {}
+                  end
+                end
+              end
             end
           end
-          super(options).merge(hash)
         end
       RUBY
     end
